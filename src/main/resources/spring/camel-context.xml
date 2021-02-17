@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans"
+    xmlns:camel="http://camel.apache.org/schema/spring"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="        http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans.xsd        http://camel.apache.org/schema/spring       http://camel.apache.org/schema/spring/camel-spring.xsd">
+    <!-- You could also define a traditional camel context here -->
+    <bean class="consultant.example.redhat.com.processors.LogProcessor" id="logProccessor"/>
+    <bean
+        class="org.springframework.jdbc.datasource.DriverManagerDataSource" id="dataSource">
+        <property name="driverClassName" value="org.h2.Driver"/>
+        <property name="url" value="jdbc:h2:file:/tmp/mytestdb;INIT=create table if not exists test;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;"/>
+        <property name="username" value="sa"/>
+        <property name="password" value=""/>
+    </bean>
+    <bean class="org.apache.camel.component.jpa.JpaComponent" id="jpa">
+        <property name="entityManagerFactory" ref="entityManagerFactory"/>
+    </bean>
+    <bean
+        class="org.springframework.orm.jpa.LocalContainerEntityManagerFactoryBean" id="entityManagerFactory">
+        <property name="dataSource" ref="dataSource"/>
+        <property name="persistenceXmlLocation" value="classpath:/META-INF/persistence.xml"/>
+        <property name="persistenceUnitName" value="eaiAppointmentPersistence"/>
+        <property name="packagesToScan" value="consultant.example.redhat.com.bean"/>
+    </bean>
+    <bean
+        class="consultant.example.redhat.com.processors.EnrichAggregationStrategy" id="aggregationStrategy"/>
+    <camel:sslContextParameters id="sslContextParameters">
+        <camel:trustManagers>
+            <camel:keyStore password="changeit" resource="/usr/lib/jvm/java-8-openjdk-amd64/jre/lib/security/cacerts"/>
+        </camel:trustManagers>
+    </camel:sslContextParameters>
+    <camelContext id="camelContext-9d0bc9e9-1e48-49a7-872b-9cd66783d1c8"
+        streamCache="false" trace="false" xmlns="http://camel.apache.org/schema/spring">
+        <intercept>
+            <process ref="logProccessor"/>
+        </intercept>
+        <route id="restPullToDB">
+            <from id="timer" uri="timer://getFromRest?period=10000"/>
+            <enrich id="enrich-rest-call" strategyRef="aggregationStrategy">
+                <constant>direct:resource</constant>
+            </enrich>
+            <unmarshal id="unmarshal">
+                <json library="Jackson" unmarshalTypeName="consultant.example.redhat.com.bean.EaiAppointmentListObject"/>
+            </unmarshal>
+            <split id="splitEaiAppointment">
+                <method
+                    beanType="consultant.example.redhat.com.processors.SpiltEaiAppointmentBean" method="spiltEaiAppointment"/>
+                <to id="to-db" uri="jpa://consultant.example.redhat.com.bean.EaiAppointment"/>
+            </split>
+        </route>
+        <route id="enrichRest">
+            <from id="enrich-from" uri="direct:resource"/>
+            <to id="to-http" uri="https4:my-json-server.typicode.com/suchan-redhat/ha-mock-rest/downloadJob?ssl=true&amp;sslContextParameters=#sslContextParameters"/>
+        </route>
+        <route id="dbToMLLP">
+            <from id="jpaDB" uri="jpa://consultant.example.redhat.com.bean.EaiAppointment"/>
+            <log id="_log1" message="body is ${body.id}"/>
+        </route>
+    </camelContext>
+</beans>
